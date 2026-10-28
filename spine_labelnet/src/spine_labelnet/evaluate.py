@@ -26,7 +26,7 @@ import torch
 from scipy.ndimage import gaussian_filter1d
 from scipy.optimize import linear_sum_assignment
 from scipy.signal import find_peaks
-from scipy.spatial import cKDTree
+from scipy.spatial import KDTree
 
 from .config import Config
 from .classes import part_space
@@ -97,7 +97,7 @@ def cluster_votes(votes: np.ndarray, radius: float, min_pts: int, max_clusters: 
         keys = np.floor(sub / radius).astype(np.int64)
         uk, inv, cnt = np.unique(keys, axis=0, return_inverse=True, return_counts=True)
         c = sub[inv.reshape(-1) == cnt.argmax()].mean(0)
-        tree = cKDTree(sub)
+        tree = KDTree(sub)
         for _ in range(10):
             idx = tree.query_ball_point(c, radius)
             if not idx:
