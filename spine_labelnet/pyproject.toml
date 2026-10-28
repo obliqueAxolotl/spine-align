@@ -1,0 +1,29 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "spine-labelnet"
+version = "0.1.0"
+description = "Component 1 of the Spine Atlas Overlay pipeline: a per-point labelling network trained on CT bone surfaces from VerSe-Lite."
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "Proprietary (code). Training data VerSe-Lite is CC BY-SA 4.0." }
+dependencies = [
+    "torch>=2.1",
+    "numpy>=1.24",
+    "scipy>=1.10",
+    "scikit-image>=0.21",
+    "nibabel>=5.0",
+    "pyyaml>=6.0",
+]
+
+[project.optional-dependencies]
+download = ["huggingface_hub>=0.20"]
+dev = ["pytest>=7"]
+
+[project.scripts]
+spine-labelnet = "spine_labelnet.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]

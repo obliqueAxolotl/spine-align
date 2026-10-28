@@ -1,0 +1,19 @@
+# Python
+__pycache__/
+*.egg-info/
+.pytest_cache/
+.venv/
+venvs/
+
+# Data and outputs: never commit
+data/
+runs/
+smoke/
+preview/
+predictions/
+*.pt
+*.npz
+*.nii
+*.nii.gz
+*.stl
+*.ply

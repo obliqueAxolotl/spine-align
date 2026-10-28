@@ -1,0 +1,93 @@
+# spine-labelnet default configuration.
+#
+# Provenance convention (handoff: "Do not over-tune to the placeholder"):
+#   provenance: placeholder  -> a guess; revisit once there is data to tune it against
+#   provenance: handoff      -> value or range stated in the engineering handoff
+#   provenance: dataset      -> fixed by VerSe-Lite itself
+# Anything tuned later should record what it was tuned against.
+
+data:
+  raw_dir: data/verse-lite
+  cache_dir: data/cache
+  split_file: data/splits.json
+  val_fraction: 0.15
+  test_fraction: 0.15
+  split_seed: 0
+  # Thoracolumbar chain: T1..T12 (8-19), T13 (28), L1..L6 (20-25).  provenance: handoff
+  # Cervical is a later extension: append 1..7 here; the network does not change.
+  levels: [8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 28, 20, 21, 22, 23, 24, 25]
+  min_levels_per_scan: 3
+  surface_spacing_mm: 1.0
+  mask_smoothing_vox: 0.75
+  extra_masks_dir: null          # combined rib/sacrum/other-bone masks, built by `spine-labelnet extra-bone`
+  extra_structures: null         # TotalSegmentator structures to extract; null = sacrum, ribs, hips,
+                                 # sternum, scapulae, clavicles, femora, humeri, S1
+  ct_bone_threshold_hu: 200.0    # bone threshold for `predict` on a raw CT image (0.5 for a mask)
+  parcel: {}                     # overrides for ParcelParams; provenance: placeholder (draft labelling guide)
+
+# Part-label classes: fixed vertebra parts, then these non-vertebral classes.
+# Every non-vertebral bone is other_bone for now. To split classes out later,
+# edit both lists and retrain -- no re-preprocessing (see classes.py), e.g.
+#   bone: [rib, sacrum, iliac, other_bone]
+#   bone_map: [["rib_*", rib], ["sacrum", sacrum], ["hip_*", iliac], ["*", other_bone]]
+classes:
+  bone: [other_bone]
+  bone_map:
+    - ["*", other_bone]
+
+sample:
+  num_points: 16384
+  min_vertebrae: 3
+  max_vertebrae: 7
+  end_extension: [0.3, 1.0]      # crop past the end centroids, in vertebra spacings
+  lateral_extent_mm: [80.0, 150.0]  # random left-right half-width, keeps ribs from dominating; null = none
+  sacrum_extension_prob: 0.6     # window ending at the lowest vertebra: extend into the sacrum this often
+  sacrum_extension: [0.5, 1.5]   # by this many vertebra spacings
+  in_view_min_fraction: 0.5      # fraction of a vertebra's surface needed to count as "in view"
+  per_vertebra_rot_deg: 3.0      # provenance: placeholder for atlas-rig re-posing
+  global_rot_deg: 10.0
+  lr_flip_prob: 0.5
+
+model:
+  in_features: 6
+  sa_npoints: [2048, 512, 128, 32]
+  sa_radii_mm: [8.0, 16.0, 32.0, 64.0]
+  sa_nsample: [32, 32, 32, 16]
+  sa_mlps: [[32, 32, 64], [64, 64, 128], [128, 128, 256], [256, 256, 512]]
+  fp_mlps: [[256, 256], [256, 256], [256, 128], [128, 128, 128]]
+  head_hidden: 128
+  dropout: 0.3
+  coord_scale_mm: 100.0
+  sampling: fps
+
+loss:
+  w_part: 1.0
+  w_level: 1.0
+  w_offset: 0.05
+  w_conf: 0.5
+  offset_beta_mm: 2.0
+  class_weights: auto
+  conf_warmup_epochs: 2
+
+train:
+  out_dir: runs/default
+  epochs: 60
+  batch_size: 8
+  samples_per_spine: 20
+  val_samples_per_spine: 5
+  train_fraction: 1.0            # learning curve: run 0.1 / 0.25 / 0.5 / 1.0
+  lr: 0.001
+  weight_decay: 0.0001
+  warmup_epochs: 2
+  grad_clip: 5.0
+  amp: true
+  num_workers: 4
+  seed: 0
+  device: auto
+  log_every: 20
+
+eval:
+  level_cluster_gap: 0.5
+  vote_cluster_radius_mm: 12.0
+  min_cluster_points: 30
+  conf_bins: 15

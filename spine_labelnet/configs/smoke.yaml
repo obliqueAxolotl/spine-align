@@ -1,0 +1,29 @@
+# Tiny settings for a CPU smoke run on the phantom. Not for real training.
+data:
+  raw_dir: smoke/raw
+  cache_dir: smoke/cache
+  split_file: smoke/splits.json
+  min_levels_per_scan: 3
+sample:
+  num_points: 2048
+  min_vertebrae: 3
+  max_vertebrae: 5
+model:
+  sa_npoints: [512, 128, 32, 8]
+  sa_nsample: [16, 16, 16, 8]
+  sa_mlps: [[16, 16, 32], [32, 32, 64], [64, 64, 128], [128, 128, 128]]
+  fp_mlps: [[128], [128], [64], [64, 64]]
+  head_hidden: 64
+loss:
+  conf_warmup_epochs: 1
+train:
+  out_dir: smoke/run
+  epochs: 3
+  batch_size: 4
+  samples_per_spine: 6
+  val_samples_per_spine: 2
+  num_workers: 0
+  log_every: 2
+  warmup_epochs: 1
+eval:
+  min_cluster_points: 10
