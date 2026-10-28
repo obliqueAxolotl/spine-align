@@ -5,12 +5,12 @@ __pycache__/
 .venv/
 venvs/
 
-# Data and outputs: never commit
-data/
-runs/
-smoke/
-preview/
-predictions/
+# Data and outputs at the project root: never commit
+/data/
+/runs/
+/smoke/
+/preview/
+/predictions/
 *.pt
 *.npz
 *.nii
