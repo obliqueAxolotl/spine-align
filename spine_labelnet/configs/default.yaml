@@ -46,7 +46,7 @@ sample:
   in_view_min_fraction: 0.5      # fraction of a vertebra's surface needed to count as "in view"
   per_vertebra_rot_deg: 3.0      # provenance: placeholder for atlas-rig re-posing
   global_rot_deg: 10.0
-  lr_flip_prob: 0.5
+  lr_flip_prob: 0
 
 model:
   in_features: 6
