@@ -95,6 +95,7 @@ class TrainConfig:
     grad_clip: float = 5.0
     amp: bool = True
     num_workers: int = 4
+    cache_size: int = 48                      # spine caches held in memory per data-loading process
     seed: int = 0
     device: str = "auto"
     log_every: int = 20

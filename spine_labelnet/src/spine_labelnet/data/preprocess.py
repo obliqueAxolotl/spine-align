@@ -36,11 +36,11 @@ log = logging.getLogger(__name__)
 def extra_bone_surfaces(em: MaskVolume, vertebra_mask: MaskVolume, spacing_mm: float,
                         smoothing_vox: float, rng: np.random.Generator):
     """One surface per extra-bone structure (each rib separately), VerSe taking priority."""
-    data = em.data.astype(np.int32)
+    data = em.data.astype(np.uint8)                       # codes < 64; 1 byte per voxel
     same_grid = (data.shape == vertebra_mask.data.shape
                  and np.allclose(em.affine, vertebra_mask.affine, atol=1e-3))
     if same_grid:
-        data = np.where(vertebra_mask.data > 0, 0, data)   # a voxel VerSe calls vertebra stays vertebra
+        data[vertebra_mask.data > 0] = 0                  # a voxel VerSe calls vertebra stays vertebra
     else:
         log.warning("extra-bone mask is on a different grid; overlap with vertebrae not removed")
     objects = ndimage.find_objects(data)

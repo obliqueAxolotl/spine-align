@@ -1,0 +1,26 @@
+# Conda environment for spine-labelnet on NVIDIA GPUs (e.g. FSU RCC, RTX 4500 Ada).
+#
+#   conda env create -f environment-cuda.yml   # or: mamba / micromamba
+#   conda activate spine-labelnet-cuda
+#   pip install -e . --no-deps
+#   python -c "import torch; print(torch.cuda.is_available())"   # on a GPU node: True
+#
+# conda-forge ships the CUDA libraries itself; the node only needs an NVIDIA
+# driver new enough for CUDA 12.6 (check `nvidia-smi`). On a login node with no
+# GPU, conda may refuse the CUDA build; set CONDA_OVERRIDE_CUDA=12.6 when
+# creating the environment there.
+name: spine-labelnet-cuda
+channels:
+  - conda-forge
+dependencies:
+  - python=3.11
+  - pytorch-gpu>=2.1
+  - cuda-version=12.6
+  - numpy>=1.24
+  - scipy>=1.10
+  - scikit-image>=0.21
+  - nibabel>=5.0
+  - pyyaml>=6.0
+  - huggingface_hub>=0.20
+  - pytest>=7
+  - pip

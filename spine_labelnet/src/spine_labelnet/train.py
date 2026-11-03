@@ -53,8 +53,10 @@ def build_datasets(cfg: Config):
                                   t.train_fraction, t.seed)
     val_files = cache_paths_for(d.cache_dir, d.split_file, "val", d.min_levels_per_scan)
     space = part_space(cfg)
-    train_ds = SpineSurfaceDataset(train_files, cfg.sample, space, t.samples_per_spine, base_seed=t.seed)
+    train_ds = SpineSurfaceDataset(train_files, cfg.sample, space, t.samples_per_spine, base_seed=t.seed,
+                                   cache_size=t.cache_size)
     val_ds = SpineSurfaceDataset(val_files, cfg.sample, space, t.val_samples_per_spine, fixed=True,
+                                 cache_size=t.cache_size,
                                  base_seed=10_000)
     log.info("train spines %d (%d samples/epoch), val spines %d (%d fixed samples)",
              len(train_files), len(train_ds), len(val_files), len(val_ds))

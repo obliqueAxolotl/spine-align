@@ -1,0 +1,24 @@
+# Conda environment for spine-labelnet on a laptop or workstation (CPU or Mac).
+# For NVIDIA GPUs (e.g. FSU RCC), use environment-cuda.yml instead.
+#
+#   conda env create -f environment.yml        # or: mamba / micromamba
+#   conda activate spine-labelnet
+#   pip install -e . --no-deps                 # the package itself, from this folder
+#   pytest -q tests                            # ~1 minute, no data needed
+#
+# Everything comes from conda-forge; `pip install --no-deps` keeps pip from
+# replacing conda's packages.
+name: spine-labelnet
+channels:
+  - conda-forge
+dependencies:
+  - python=3.11
+  - pytorch>=2.1
+  - numpy>=1.24
+  - scipy>=1.10
+  - scikit-image>=0.21
+  - nibabel>=5.0
+  - pyyaml>=6.0
+  - huggingface_hub>=0.20   # only for `spine-labelnet download`
+  - pytest>=7               # only for the tests
+  - pip

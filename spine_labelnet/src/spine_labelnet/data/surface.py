@@ -93,7 +93,9 @@ def extract_vertebrae(mask: MaskVolume, levels: list[int], spacing_mm: float,
     rng = np.random.default_rng(seed)
     data = mask.data
     present = [int(l) for l in np.unique(data) if int(l) in set(levels)]
-    objects = ndimage.find_objects(data.astype(np.int32))
+    # find_objects works on any integer type; avoid an int32 copy of a whole-body volume.
+    objects = ndimage.find_objects(data if data.dtype.kind in "iu" and data.dtype.itemsize <= 4
+                                   else data.astype(np.int32))
     labels, cents, trunc, surfs = [], [], [], {}
     for lab in caudal_to_rostral(present):
         slc = objects[lab - 1]

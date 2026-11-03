@@ -48,10 +48,30 @@ PointNet++ (pure PyTorch) + global scan feature -> 4 heads
 predict: CT volume / STL / npz -> per-point part, level, confidence, vote centroids
 ```
 
-## Quick start
+## Installing
+
+With pip (in a virtual environment, after installing PyTorch for your hardware):
 
 ```bash
 pip install -e ".[download,dev]"
+```
+
+With conda (or mamba / micromamba), everything from conda-forge:
+
+```bash
+conda env create -f environment.yml          # CPU / laptop / Mac
+conda env create -f environment-cuda.yml     # NVIDIA GPUs, CUDA 12.6 (e.g. RCC)
+conda activate spine-labelnet                # or spine-labelnet-cuda
+pip install -e . --no-deps                   # the package; --no-deps keeps conda's packages
+pytest -q tests
+```
+
+Creating the CUDA environment on a machine without a GPU (e.g. a cluster login
+node) needs `CONDA_OVERRIDE_CUDA=12.6` set for that command.
+
+## Quick start
+
+```bash
 
 # 1. Data: VerSe-Lite is ~49 GB as five zips. Masks only by default;
 #    add --images if you will run TotalSegmentator (step 1b).
