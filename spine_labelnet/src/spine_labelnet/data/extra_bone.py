@@ -24,6 +24,8 @@ you use before building anything commercial on its output.
 from __future__ import annotations
 
 import logging
+import shutil
+import time
 from pathlib import Path
 
 import nibabel as nib
@@ -94,12 +96,22 @@ def save_combined(vol: np.ndarray, affine: np.ndarray, out_path: str | Path) -> 
 
 def run_totalsegmentator(image: Path, out_dir: Path, structures: list[str],
                          fast: bool = False, device: str = "gpu") -> Path:
+    """Run TotalSegmentator into out_dir. Output is written to a temporary
+    folder and renamed when complete, so a job killed half-way (time limit,
+    preemption) never leaves a partial folder that a rerun would trust."""
     try:
         from totalsegmentator.python_api import totalsegmentator
     except ImportError as e:
         raise ImportError("TotalSegmentator is not installed: pip install TotalSegmentator") from e
-    out_dir.mkdir(parents=True, exist_ok=True)
-    totalsegmentator(str(image), str(out_dir), roi_subset=list(structures), fast=fast, device=device)
+    tmp = out_dir.with_name(out_dir.name + ".partial")
+    if tmp.exists():
+        shutil.rmtree(tmp)
+    tmp.mkdir(parents=True)
+    totalsegmentator(str(image), str(tmp), roi_subset=list(structures), fast=fast, device=device,
+                     quiet=True)
+    if out_dir.exists():
+        shutil.rmtree(out_dir)
+    tmp.rename(out_dir)
     return out_dir
 
 
@@ -117,7 +129,9 @@ def build_extra_masks(raw_dir: str, extra_masks_dir: str, ts_dir: str | None = N
     ts_root = Path(ts_dir) if ts_dir else out_root / "_totalsegmentator"
     done, skipped, failed = 0, 0, []
     records = discover_scans(raw_dir)
-    for rec in records[:limit] if limit else records:
+    records = records[:limit] if limit else records
+    t_start = time.time()
+    for i, rec in enumerate(records):
         out = out_root / f"{rec.scan_id}.nii.gz"
         if out.exists() and not overwrite:
             skipped += 1
@@ -134,7 +148,11 @@ def build_extra_masks(raw_dir: str, extra_masks_dir: str, ts_dir: str | None = N
             vol, affine = combine_folder(folder, structures)
             save_combined(vol, affine, out)
             done += 1
-            log.info("%s: extra-bone mask written", rec.scan_id)
+            found = sorted({bone_name(int(c)) for c in np.unique(vol) if c > 0})
+            rate = (time.time() - t_start) / done
+            log.info("[%d/%d] %s: %d structures (%s); %.0f s/scan, ~%.1f h left", i + 1, len(records),
+                     rec.scan_id, len(found), ", ".join(found[:6]) + (" ..." if len(found) > 6 else ""),
+                     rate, rate * (len(records) - i - 1) / 3600)
         except Exception as e:
             failed.append({"scan_id": rec.scan_id, "error": f"{type(e).__name__}: {e}"})
             log.warning("%s: %s", rec.scan_id, e)
