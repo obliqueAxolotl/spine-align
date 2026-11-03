@@ -118,18 +118,26 @@ def run_totalsegmentator(image: Path, out_dir: Path, structures: list[str],
 def build_extra_masks(raw_dir: str, extra_masks_dir: str, ts_dir: str | None = None,
                       run: bool = False, structures: list[str] | None = None,
                       fast: bool = False, device: str = "gpu", overwrite: bool = False,
-                      limit: int | None = None) -> dict:
+                      limit: int | None = None, shard: tuple[int, int] = (0, 1)) -> dict:
     """Write <extra_masks_dir>/<scan_id>.nii.gz (BONE_STRUCTURES codes) for every scan.
 
     ts_dir: TotalSegmentator output laid out as <ts_dir>/<scan_id>/<class>.nii.gz.
     run=True runs TotalSegmentator on Images/<scan_id>.nii.gz where that output is missing.
+    shard=(i, n) processes every n-th scan starting at i (after `limit`), so n
+    processes -- one per GPU -- split the scans between them without overlap.
     """
+    i_shard, n_shard = shard
+    if not (n_shard >= 1 and 0 <= i_shard < n_shard):
+        raise ValueError(f"shard must be (i, n) with 0 <= i < n, got {shard}")
     structures = structures if structures is not None else DEFAULT_STRUCTURES
     out_root = Path(extra_masks_dir)
     ts_root = Path(ts_dir) if ts_dir else out_root / "_totalsegmentator"
     done, skipped, failed = 0, 0, []
     records = discover_scans(raw_dir)
     records = records[:limit] if limit else records
+    records = records[i_shard::n_shard]
+    tag = f"[shard {i_shard + 1}/{n_shard}] " if n_shard > 1 else ""
+    log.info("%s%d scans to check", tag, len(records))
     t_start = time.time()
     for i, rec in enumerate(records):
         out = out_root / f"{rec.scan_id}.nii.gz"
@@ -150,7 +158,7 @@ def build_extra_masks(raw_dir: str, extra_masks_dir: str, ts_dir: str | None = N
             done += 1
             found = sorted({bone_name(int(c)) for c in np.unique(vol) if c > 0})
             rate = (time.time() - t_start) / done
-            log.info("[%d/%d] %s: %d structures (%s); %.0f s/scan, ~%.1f h left", i + 1, len(records),
+            log.info("%s[%d/%d] %s: %d structures (%s); %.0f s/scan, ~%.1f h left", tag, i + 1, len(records),
                      rec.scan_id, len(found), ", ".join(found[:6]) + (" ..." if len(found) > 6 else ""),
                      rate, rate * (len(records) - i - 1) / 3600)
         except Exception as e:

@@ -43,6 +43,17 @@ def cmd_check_data(args):
         raise SystemExit(1)
 
 
+def _parse_shard(text: str) -> tuple[int, int]:
+    """'1/2' -> (0, 2): the first of two shards, written 1-based on the command line."""
+    try:
+        k, n = (int(v) for v in text.split("/"))
+    except ValueError:
+        raise SystemExit(f"--shard takes K/N, e.g. 1/2, got {text!r}")
+    if not 1 <= k <= n:
+        raise SystemExit(f"--shard K/N needs 1 <= K <= N, got {text!r}")
+    return k - 1, n
+
+
 def cmd_extra_bone(args):
     from .data.extra_bone import build_extra_masks
     cfg = _cfg(args)
@@ -50,7 +61,8 @@ def cmd_extra_bone(args):
         raise SystemExit("set data.extra_masks_dir (config or -o data.extra_masks_dir=...)")
     res = build_extra_masks(cfg.data.raw_dir, cfg.data.extra_masks_dir, ts_dir=args.ts_dir,
                             run=args.run, structures=cfg.data.extra_structures, fast=args.fast,
-                            device=args.device, overwrite=args.overwrite, limit=args.limit)
+                            device=args.device, overwrite=args.overwrite, limit=args.limit,
+                            shard=_parse_shard(args.shard))
     print(json.dumps({k: (v if k != "failed" else v[:20]) for k, v in res.items()}, indent=2))
 
 
@@ -169,7 +181,10 @@ def main(argv=None):
     p.add_argument("--run", action="store_true", help="run TotalSegmentator where output is missing")
     p.add_argument("--fast", action="store_true", help="TotalSegmentator 3 mm fast model")
     p.add_argument("--device", default="gpu"); p.add_argument("--overwrite", action="store_true")
-    p.add_argument("--limit", type=int); p.set_defaults(fn=cmd_extra_bone)
+    p.add_argument("--limit", type=int)
+    p.add_argument("--shard", default="1/1", help="K/N: process every N-th scan starting at the K-th "
+                   "(run N copies, one per GPU, with K = 1..N)")
+    p.set_defaults(fn=cmd_extra_bone)
 
     p = with_cfg(sub.add_parser("preprocess")); p.add_argument("--workers", type=int, default=4)
     p.add_argument("--limit", type=int); p.add_argument("--overwrite", action="store_true")

@@ -202,6 +202,24 @@ def test_extra_bone_classes(tmp_path):
     assert bilateral.lr_swap[bilateral.index("rib_left")] == bilateral.index("rib_right")
 
 
+def test_extra_bone_shards_split_scans(tmp_path):
+    """Two shards (one per GPU) cover every scan exactly once."""
+    from spine_labelnet.data.extra_bone import build_extra_masks
+    for i in range(5):
+        mask = make_phantom(tmp_path / "raw" / "Masks" / f"sub-verse{910 + i}_ct.nii.gz",
+                            labels=(18, 19, 20), bottom_margin=50, seed=i)
+        write_phantom_totalsegmentator(mask, tmp_path / "ts" / f"sub-verse{910 + i}_ct")
+    kw = dict(raw_dir=str(tmp_path / "raw"), extra_masks_dir=str(tmp_path / "extra"),
+              ts_dir=str(tmp_path / "ts"))
+    a = build_extra_masks(**kw, shard=(0, 2))
+    b = build_extra_masks(**kw, shard=(1, 2))
+    assert (a["written"], b["written"]) == (3, 2) and not a["failed"] and not b["failed"]
+    assert len(list((tmp_path / "extra").glob("*.nii.gz"))) == 5
+    assert build_extra_masks(**kw)["skipped_existing"] == 5
+    with pytest.raises(ValueError):
+        build_extra_masks(**kw, shard=(2, 2))
+
+
 def test_model_forward_backward(cfg):
     torch = pytest.importorskip("torch")
     from spine_labelnet.losses import compute_losses
