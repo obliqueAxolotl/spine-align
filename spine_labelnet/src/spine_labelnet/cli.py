@@ -29,7 +29,8 @@ def _cfg(args):
 
 def cmd_download(args):
     from .data.verse import download
-    download(args.out, keep_zips=args.keep_zips, include_images=args.images)
+    out = args.out or _cfg(args).data.raw_dir
+    download(out, keep_zips=args.keep_zips, include_images=args.images)
 
 
 def cmd_check_data(args):
@@ -93,7 +94,7 @@ def _loader(cfg, split, samples, base_seed, batch_size=None):
     files = cache_paths_for(cfg.data.cache_dir, cfg.data.split_file, split, cfg.data.min_levels_per_scan)
     from .classes import part_space
     ds = SpineSurfaceDataset(files, cfg.sample, part_space(cfg), samples, fixed=True,
-                             base_seed=base_seed)
+                             base_seed=base_seed, cache_size=cfg.train.cache_size)
     return DataLoader(ds, batch_size or cfg.train.batch_size, num_workers=cfg.train.num_workers)
 
 
@@ -153,7 +154,8 @@ def main(argv=None):
         p.add_argument("-o", "--override", action="append", default=[], help="key.path=value")
         return p
 
-    p = sub.add_parser("download"); p.add_argument("--out", default="data/verse-lite")
+    p = with_cfg(sub.add_parser("download"))
+    p.add_argument("--out", help="destination folder, any drive (default: data.raw_dir from the config)")
     p.add_argument("--keep-zips", action="store_true"); p.add_argument("--images", action="store_true")
     p.set_defaults(fn=cmd_download)
 

@@ -18,7 +18,10 @@ from __future__ import annotations
 import hashlib
 import json
 import logging
+import os
 import re
+import shutil
+import tempfile
 import zipfile
 from dataclasses import dataclass
 from pathlib import Path
@@ -64,34 +67,90 @@ def extract_zip(path: str | Path, raw_dir: str | Path, include_images: bool) -> 
             counts[kind] += 1
             if kind == "mask" or include_images:
                 zf.extract(member, raw_dir)
-    if counts["mask"] == 0:
-        raise RuntimeError(f"{path}: no NIfTI files under a Masks/ folder. Unexpected layout; "
-                           f"first entries: {examples}")
+    if counts["mask"] == 0 and counts["image"] == 0:
+        raise RuntimeError(f"{path}: no NIfTI files under a Masks/ or Images/ folder. Unexpected "
+                           f"layout; first entries: {examples}")
+    # A single archive may hold only images (VerSe-Lite's first part does); the
+    # check that masks exist at all is made in download() after every part.
     if counts["other"]:
         log.warning("%s: %d entries outside Images/ and Masks/ were skipped, e.g. %s",
                     path, counts["other"], examples[:5])
     return counts
 
 
+def prepare_dir(path: str | Path) -> Path:
+    """Absolute, created, writable folder from a user-supplied path, or a clear error.
+
+    Expands ~ and environment variables (Python does not do this itself, and
+    PowerShell / cmd do not expand ~), and catches the drive-relative Windows
+    path a shell produces when it eats the backslashes ("D:\\data" -> "D:data").
+    """
+    raw = str(path)
+    p = Path(os.path.expandvars(os.path.expanduser(raw)))
+    if p.drive and not p.is_absolute():
+        raise ValueError(f"'{raw}' is relative to the current folder on drive {p.drive}, which is "
+                         f"probably not what you meant (a shell may have removed backslashes). "
+                         f"Use forward slashes, e.g. {p.drive}/data/verse-lite, or quote the path.")
+    if "$" in str(p) or "%" in str(p):
+        raise ValueError(f"'{raw}' contains an environment variable that is not set.")
+    p = p.resolve()
+    try:
+        p.mkdir(parents=True, exist_ok=True)
+        with tempfile.NamedTemporaryFile(dir=p):
+            pass
+    except OSError as e:
+        raise OSError(f"cannot create or write to {p}: {e}. Check the drive is connected and "
+                      f"that you have write permission there.") from e
+    return p
+
+
+def _long_path(p: Path) -> Path:
+    """On Windows, lift the 260-character path limit for files written under p."""
+    if os.name == "nt" and not str(p).startswith("\\\\?\\"):
+        return Path("\\\\?\\" + str(p))
+    return p
+
+
 def download(raw_dir: str | Path, keep_zips: bool = False, include_images: bool = False) -> Path:
     """Fetch VerSe-Lite from the Hugging Face Hub and extract the masks (~49 GB of zips).
 
-    The zips are downloaded one at a time and deleted after extraction unless
-    keep_zips, so peak disk use is one zip (~11 GB) plus what is extracted.
+    Everything -- the zips, Hugging Face's download bookkeeping and the
+    extracted files -- goes under ``raw_dir``, so it can be on any drive and
+    nothing large lands in the home folder's cache. The zips are downloaded one
+    at a time and deleted after extraction unless keep_zips, so peak disk use is
+    one zip (~11 GB) plus what is extracted.
     """
-    from huggingface_hub import list_repo_files, hf_hub_download
+    import inspect
 
-    raw_dir = Path(raw_dir)
+    from huggingface_hub import hf_hub_download, list_repo_files
+
+    raw_dir = prepare_dir(raw_dir)
+    log.info("downloading VerSe-Lite into %s", raw_dir)
     zip_dir = raw_dir / "_zips"
-    zip_dir.mkdir(parents=True, exist_ok=True)
+    zip_dir.mkdir(exist_ok=True)
+    kwargs = {"repo_type": "dataset", "local_dir": str(zip_dir), "cache_dir": str(zip_dir / ".hf-cache")}
+    if "local_dir_use_symlinks" in inspect.signature(hf_hub_download).parameters:
+        kwargs["local_dir_use_symlinks"] = False    # older huggingface_hub: real files, no cross-drive links
     parts = sorted(f for f in list_repo_files(HF_REPO, repo_type="dataset") if f.endswith(".zip"))
     log.info("VerSe-Lite archives: %s", parts)
+    total = {"mask": 0, "image": 0}
     for part in parts:
-        local = Path(hf_hub_download(HF_REPO, part, repo_type="dataset", local_dir=zip_dir))
-        counts = extract_zip(local, raw_dir, include_images)
-        log.info("%s: %d masks, %d images in archive", part, counts["mask"], counts["image"])
+        local = Path(hf_hub_download(HF_REPO, part, **kwargs))
+        counts = extract_zip(local, _long_path(raw_dir), include_images)
+        total["mask"] += counts["mask"]; total["image"] += counts["image"]
+        what = ("extracted" if include_images else "skipped (pass --images to keep them)")
+        log.info("%s: %d masks extracted, %d images %s", part, counts["mask"], counts["image"],
+                 what if counts["image"] else "")
         if not keep_zips:
             local.unlink()
+    if total["mask"] == 0:
+        raise RuntimeError(f"no NIfTI files under a Masks/ folder in any of {parts}; "
+                           f"the dataset layout has changed. Nothing usable was extracted.")
+    log.info("%d masks, %d images in total", total["mask"], total["image"])
+    if not keep_zips:
+        shutil.rmtree(zip_dir, ignore_errors=True)
+    log.info("done. Point the other commands at this folder with:  -o data.raw_dir=%s",
+             raw_dir.as_posix())
     return raw_dir
 
 

@@ -106,8 +106,17 @@ def test_archive_layouts(tmp_path, entries, expect_subject):
 def test_archive_without_masks_fails_loudly(tmp_path):
     from spine_labelnet.data.verse import extract_zip
     z = _zip_layout(tmp_path, ["data/sub-verse004_ct.nii.gz"])
-    with pytest.raises(RuntimeError, match="no NIfTI files under a Masks/ folder"):
+    with pytest.raises(RuntimeError, match="no NIfTI files under a Masks/ or Images/ folder"):
         extract_zip(z, tmp_path / "raw", include_images=False)
+
+
+def test_images_only_archive_is_allowed(tmp_path):
+    """VerSe-Lite's first archive holds only images; masks come in later parts."""
+    from spine_labelnet.data.verse import extract_zip
+    z = _zip_layout(tmp_path, ["VerSe-Lite/Images/sub-verse005.nii.gz"])
+    counts = extract_zip(z, tmp_path / "raw", include_images=False)
+    assert counts["image"] == 1 and counts["mask"] == 0
+    assert not (tmp_path / "raw").exists() or not any((tmp_path / "raw").rglob("*.nii.gz"))
 
 
 def test_parcellation_is_bilateral(caches):
@@ -245,3 +254,13 @@ def test_default_yaml_matches_builtin_defaults():
     c, d = load_config(ROOT / "configs" / "default.yaml").to_dict(), Config().to_dict()
     c["data"]["levels"], d["data"]["levels"] = sorted(c["data"]["levels"]), sorted(d["data"]["levels"])
     assert c == d
+
+
+def test_caches_work_after_moving(caches, cfg, tmp_path):
+    """Preprocess on one machine, train on another: a copied cache folder must still load."""
+    import shutil
+    from spine_labelnet.data.dataset import cache_paths_for
+    moved = tmp_path / "elsewhere" / "cache"
+    shutil.copytree(caches[0].parent, moved)
+    paths = cache_paths_for(str(moved), cfg.data.split_file, "train", cfg.data.min_levels_per_scan)
+    assert paths and all(p.startswith(str(moved)) for p in paths)
