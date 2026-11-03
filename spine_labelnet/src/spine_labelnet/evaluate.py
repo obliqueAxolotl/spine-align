@@ -12,7 +12,10 @@ Reports, per level and never only pooled:
 * centroid votes: per-point offset error, clustered-centroid error, missed /
   spurious clusters, and whether cluster order along the spine agrees with the
   decoded level order (the cross-check the handoff prescribes)
-* confidence: ECE and Brier score, raw and after temperature scaling
+* confidence: ECE and Brier score, raw and after temperature scaling; AUROC
+  (how well confidence separates right from wrong points)
+* part labels also get per-class precision / recall / F1 and one-vs-rest ROC
+  curves with AUC, from the predicted class probabilities
 """
 
 from __future__ import annotations
@@ -31,7 +34,12 @@ from scipy.spatial import KDTree
 from .config import Config
 from .classes import part_space
 from .constants import IGNORE_INDEX, VERSE_LABELS, VERSE_ORDER
-from .losses import confidence_target
+from .losses import compute_losses, confidence_target
+
+_trapz = getattr(np, "trapezoid", None) or np.trapz
+# False-positive rates at which ROC curves are stored (log-spaced: the low-FPR
+# end is where a per-point labeller's errors show).
+ROC_FPR_GRID = np.concatenate([[0.0], np.logspace(-4, 0, 61)])
 
 
 
@@ -39,9 +47,14 @@ from .losses import confidence_target
 # Inference
 # --------------------------------------------------------------------------
 @torch.no_grad()
-def run_inference(model, loader, device, max_batches: int | None = None):
+def run_inference(model, loader, device, max_batches: int | None = None, loss_cfg=None,
+                  class_weights=None, conf_active: bool = True, loss_out: dict | None = None):
+    """Per-sample predictions. With loss_cfg and loss_out, also fills loss_out with the
+    mean of each training loss over these samples (validation loss)."""
     model.eval()
     results = []
+    sums: dict[str, float] = {}
+    n_seen = 0
     for bi, batch in enumerate(loader):
         if max_batches is not None and bi >= max_batches:
             break
@@ -50,6 +63,10 @@ def run_inference(model, loader, device, max_batches: int | None = None):
         cal = model.calibrated(out)
         tgt = confidence_target(out, batch)
         B = batch["xyz"].shape[0]
+        if loss_cfg is not None and loss_out is not None:
+            for k, v in compute_losses(out, batch, loss_cfg, class_weights, conf_active).items():
+                sums[k] = sums.get(k, 0.0) + float(v) * B
+            n_seen += B
         for b in range(B):
             r = {k: v[b].cpu().numpy() for k, v in batch.items()}
             r["part_prob"] = cal["part_prob"][b].cpu().numpy()
@@ -61,7 +78,32 @@ def run_inference(model, loader, device, max_batches: int | None = None):
             r["conf"] = cal["conf"][b].cpu().numpy()
             r["conf_target"] = tgt[b].cpu().numpy()
             results.append(r)
+    if loss_out is not None and n_seen:
+        loss_out.update({k: v / n_seen for k, v in sums.items()})
     return results
+
+
+def roc_curve(score: np.ndarray, y: np.ndarray):
+    """(auc, fpr, tpr) for binary labels y; None if y has only one class."""
+    y = np.asarray(y).astype(bool)
+    P = int(y.sum()); N = len(y) - P
+    if P == 0 or N == 0:
+        return None
+    o = np.argsort(-np.asarray(score), kind="stable")
+    s, yy = np.asarray(score)[o], y[o]
+    tp, fp = np.cumsum(yy), np.cumsum(~yy)
+    last = np.r_[np.diff(s) != 0, True]               # one point per distinct threshold
+    tpr = np.r_[0.0, tp[last] / P]
+    fpr = np.r_[0.0, fp[last] / N]
+    return float(_trapz(tpr, fpr)), fpr, tpr
+
+
+def _roc_summary(score, y) -> dict | None:
+    res = roc_curve(score, y)
+    if res is None:
+        return None
+    auc, fpr, tpr = res
+    return {"auc": auc, "tpr": np.round(np.interp(ROC_FPR_GRID, fpr, tpr), 5).tolist()}
 
 
 # --------------------------------------------------------------------------
@@ -199,8 +241,11 @@ def _name(label: int) -> str:
 # --------------------------------------------------------------------------
 # Metrics
 # --------------------------------------------------------------------------
-def compute_metrics(results: list[dict], cfg: Config) -> dict:
+def compute_metrics(results: list[dict], cfg: Config, max_roc_points: int = 600_000) -> dict:
     ec = cfg.eval
+    rng = np.random.default_rng(0)
+    per_sample = max(1, max_roc_points // max(1, len(results)))
+    roc_prob, roc_gt = [], []
     space = part_space(cfg)
     NUM_PARTS, PART_CLASSES = space.num, list(space.names)
     VERT_PARTS = np.array(sorted(space.vertebra_parts))
@@ -218,6 +263,10 @@ def compute_metrics(results: list[dict], cfg: Config) -> dict:
         gt, pr = r["part"], r["part_pred"]
         lab = gt != IGNORE_INDEX
         np.add.at(conf_mat, (gt[lab], pr[lab]), 1)
+        li = np.flatnonzero(lab)
+        if len(li) > per_sample:
+            li = rng.choice(li, per_sample, replace=False)
+        roc_prob.append(r["part_prob"][li]); roc_gt.append(gt[li])
         vl = r["vert_label"]
 
         for L in np.unique(vl[lab & (vl > 0)]):
@@ -288,12 +337,29 @@ def compute_metrics(results: list[dict], cfg: Config) -> dict:
     support = conf_mat.sum(1)
     union = conf_mat.sum(0) + support - tp
     iou = {PART_CLASSES[c]: float(tp[c] / union[c]) for c in range(NUM_PARTS) if support[c] > 0}
+    predicted = conf_mat.sum(0)
+    prec = {PART_CLASSES[c]: float(tp[c] / predicted[c]) if predicted[c] else 0.0
+            for c in range(NUM_PARTS) if support[c] > 0}
+    rec = {PART_CLASSES[c]: float(tp[c] / support[c]) for c in range(NUM_PARTS) if support[c] > 0}
+    f1 = {k: (2 * prec[k] * rec[k] / (prec[k] + rec[k]) if prec[k] + rec[k] else 0.0) for k in rec}
+    roc = {}
+    if roc_prob:
+        P, G = np.concatenate(roc_prob), np.concatenate(roc_gt)
+        for c in range(NUM_PARTS):
+            summ = _roc_summary(P[:, c], G == c)
+            if summ is not None:
+                roc[PART_CLASSES[c]] = summ
     out: dict = {
         "n_samples": len(results),
+        "roc_fpr": np.round(ROC_FPR_GRID, 6).tolist(),
         "part": {
             "accuracy": float(tp.sum() / max(conf_mat.sum(), 1)),
             "mIoU": float(np.mean(list(iou.values()))) if iou else float("nan"),
             "iou": iou,
+            "precision": prec, "recall": rec, "f1": f1,
+            "macro_f1": float(np.mean(list(f1.values()))) if f1 else float("nan"),
+            "roc": roc,
+            "macro_auc": float(np.mean([v["auc"] for v in roc.values()])) if roc else float("nan"),
             "confusion": conf_mat.tolist(),
             "classes": PART_CLASSES,
         },
@@ -325,8 +391,11 @@ def compute_metrics(results: list[dict], cfg: Config) -> dict:
         p, pr_, y = np.concatenate(conf_p), np.concatenate(conf_raw), np.concatenate(conf_y)
         ece, brier, table = ece_brier(p, y, ec.conf_bins)
         ece_raw, brier_raw, _ = ece_brier(pr_, y, ec.conf_bins)
+        sub = rng.choice(len(p), min(len(p), max_roc_points), replace=False)
+        croc = _roc_summary(p[sub], y[sub] > 0.5)
         out["confidence"] = {"ece": ece, "brier": brier, "ece_uncalibrated": ece_raw,
                              "brier_uncalibrated": brier_raw, "positive_rate": float(y.mean()),
+                             "auroc": croc["auc"] if croc else None, "roc": croc,
                              "reliability": table}
 
     lv = {}
@@ -357,8 +426,16 @@ def write_report(metrics: dict, out_dir: str | Path, name: str = "eval") -> Path
         json.dump(metrics, f, indent=2)
     L = [f"# Labelling network -- {name}", "", f"Samples: {metrics['n_samples']}", ""]
     p = metrics["part"]
-    L += ["## Part labels", f"accuracy {p['accuracy']:.3f}, mIoU {p['mIoU']:.3f}", "",
-          "| class | IoU |", "|---|---|"] + [f"| {k} | {v:.3f} |" for k, v in p["iou"].items()]
+    roc = p.get("roc", {})
+    L += ["## Part labels",
+          f"accuracy {p['accuracy']:.3f}, mIoU {p['mIoU']:.3f}, macro F1 {p.get('macro_f1', float('nan')):.3f}, "
+          f"macro AUC {p.get('macro_auc', float('nan')):.4f}", "",
+          "| class | IoU | precision | recall | F1 | AUC |", "|---|---|---|---|---|---|"]
+    for k, v in p["iou"].items():
+        auc = roc.get(k, {}).get("auc")
+        L.append(f"| {k} | {v:.3f} | {p.get('precision', {}).get(k, float('nan')):.3f} | "
+                 f"{p.get('recall', {}).get(k, float('nan')):.3f} | {p.get('f1', {}).get(k, float('nan')):.3f} | "
+                 + (f"{auc:.4f}" if auc is not None else "-") + " |")
     if "level" in metrics:
         lv = metrics["level"]
         L += ["", "## Level coordinate",
@@ -385,7 +462,8 @@ def write_report(metrics: dict, out_dir: str | Path, name: str = "eval") -> Path
         L += ["", "## Confidence",
               f"- ECE {c['ece']:.4f} (uncalibrated {c['ece_uncalibrated']:.4f}), "
               f"Brier {c['brier']:.4f} (uncalibrated {c['brier_uncalibrated']:.4f}), "
-              f"positive rate {c['positive_rate']:.3f}"]
+              f"positive rate {c['positive_rate']:.3f}"
+              + (f", AUROC {c['auroc']:.4f}" if c.get("auroc") is not None else "")]
     cols = ["n", "part_acc", "index_ok_peaks", "level_mae", "offset_err_mm", "centroid_err_mm",
             "centroid_err_mm_worst"]
     L += ["", "## Per level (caudal first)", "", "| level | " + " | ".join(cols) + " |",

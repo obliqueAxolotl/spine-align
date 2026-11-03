@@ -231,6 +231,11 @@ def test_train_evaluate_calibrate_predict(caches, cfg, workdir):
 
     best = train(cfg)
     assert best.exists()
+    rows = [json.loads(l) for l in open(best.parent / "metrics.jsonl")]
+    last = rows[-1]
+    assert set(last["val"]) == set(last["train"]) and "lr" in last           # validation loss logged
+    n = len(last["val_confusion"])
+    assert n == len(last["val_confusion"][0]) and 0 <= last["val_part_macro_auc"] <= 1
     model, c2, _ = load_checkpoint(best)
     res = run_inference(model, _loader(c2, "val", 2, 20_000), torch.device("cpu"))
     fitted = calibrate(model, res)
@@ -239,6 +244,8 @@ def test_train_evaluate_calibrate_predict(caches, cfg, workdir):
     metrics = compute_metrics(res, c2)
     report = write_report(metrics, workdir / "run", "eval_test")
     assert report.name == "eval_test.md" and "Per level" in report.read_text()
+    assert len(metrics["roc_fpr"]) == len(next(iter(metrics["part"]["roc"].values()))["tpr"])
+    assert set(metrics["part"]["f1"]) == set(metrics["part"]["iou"])
     mask = next((workdir / "raw" / "Masks").glob("*.nii.gz"))
     stl = write_phantom_stl(mask, workdir / "scan.stl")
     for src in (stl, mask):                       # STL surface, and a volume thresholded at 0.5
@@ -246,6 +253,15 @@ def test_train_evaluate_calibrate_predict(caches, cfg, workdir):
         out = predict_file(model, c2, str(src), str(workdir / f"{src.stem}_labels.npz"),
                            torch.device("cpu"))
         assert len(out["part"]) == len(out["points"]) and len(out["vote_centroids"]) > 0
+
+
+def test_roc_curve():
+    from spine_labelnet.evaluate import roc_curve
+    rng = np.random.default_rng(0)
+    y = rng.random(5000) < 0.3
+    assert roc_curve(y.astype(float), y)[0] == pytest.approx(1.0)
+    assert roc_curve(rng.random(5000), y)[0] == pytest.approx(0.5, abs=0.05)
+    assert roc_curve(np.zeros(10), np.zeros(10)) is None
 
 
 def test_default_yaml_matches_builtin_defaults():

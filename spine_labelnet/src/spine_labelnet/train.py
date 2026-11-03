@@ -164,17 +164,32 @@ def train(cfg: Config, resume: str | None = None) -> Path:
                          sched.get_last_lr()[0])
         train_stats = {k: v / steps_per_epoch for k, v in sums.items()}
 
-        results = run_inference(model, val_loader, device)
+        val_losses: dict[str, float] = {}
+        results = run_inference(model, val_loader, device, loss_cfg=cfg.loss, class_weights=cw,
+                                conf_active=conf_active, loss_out=val_losses)
         metrics = compute_metrics(results, cfg)
         sc = score(metrics)
-        rec = {"epoch": epoch, "time_s": round(time.time() - t0, 1), "train": train_stats,
+        rec = {"epoch": epoch, "time_s": round(time.time() - t0, 1),
+               "lr": sched.get_last_lr()[0], "train": train_stats, "val": val_losses,
                "val_score": sc, "val_part_mIoU": metrics["part"]["mIoU"],
                "val_part_acc": metrics["part"]["accuracy"],
                "val_level_index_acc": metrics.get("level", {}).get("vertebra_index_acc_peaks"),
                "val_level_mae": metrics.get("level", {}).get("point_mae"),
                "val_offset_median_mm": metrics.get("offset", {}).get("median_mm"),
-               "val_centroid_median_mm": metrics.get("centroid_votes", {}).get("median_err_mm")}
-        log.info("epoch %d: %s", epoch, json.dumps({k: v for k, v in rec.items() if k != "train"}))
+               "val_centroid_median_mm": metrics.get("centroid_votes", {}).get("median_err_mm"),
+               "val_part_macro_f1": metrics["part"]["macro_f1"],
+               "val_part_macro_auc": metrics["part"]["macro_auc"],
+               "val_conf_auroc": metrics.get("confidence", {}).get("auroc"),
+               "val_conf_ece": metrics.get("confidence", {}).get("ece"),
+               # per-epoch detail, for plotting how each class develops
+               "val_iou": metrics["part"]["iou"],
+               "val_confusion": metrics["part"]["confusion"]}
+        log.info("epoch %d: %s", epoch, json.dumps(
+            {k: (round(v, 4) if isinstance(v, float) else v) for k, v in rec.items()
+             if k not in ("train", "val", "val_iou", "val_confusion")}))
+        log.info("epoch %d losses: train %s | val %s", epoch,
+                 {k: round(v, 4) for k, v in train_stats.items()},
+                 {k: round(v, 4) for k, v in val_losses.items()})
         with open(log_path, "a") as f:
             f.write(json.dumps(rec) + "\n")
 
