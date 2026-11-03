@@ -23,7 +23,7 @@ from pathlib import Path
 
 import numpy as np
 import torch
-from scipy.spatial import cKDTree
+from scipy.spatial import KDTree
 
 from .classes import part_colors, part_space
 from .data.io import load_points, write_ply
@@ -45,7 +45,7 @@ def predict_points(model, cfg, points: np.ndarray, normals: np.ndarray, device,
     sub = {k: v[0].cpu().numpy() for k, v in cal.items()}
 
     # propagate from the network's subset to every input point
-    nn = cKDTree(points[idx]).query(points)[1]
+    nn = KDTree(points[idx]).query(points)[1]
     part_prob = sub["part_prob"][nn]
     part = part_prob.argmax(-1)
     level_mu, level_std = sub["level_mu"][nn], sub["level_std"][nn]

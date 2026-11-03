@@ -19,7 +19,7 @@ from __future__ import annotations
 from dataclasses import dataclass, fields
 
 import numpy as np
-from scipy.spatial import cKDTree
+from scipy.spatial import KDTree
 
 from ..constants import PART
 
@@ -70,7 +70,7 @@ def refine_axial_rotation(local: np.ndarray, params: ParcelParams,
         R = np.array([[c, -s, 0], [s, c, 0], [0, 0, 1]])
         p = tree_src @ R                               # coordinates in rotated frame
         mirrored = p * np.array([-1.0, 1.0, 1.0])
-        cost = cKDTree(p).query(mirrored)[0].mean()
+        cost = KDTree(p).query(mirrored)[0].mean()
         if cost < best_cost:
             best, best_cost = t, cost
     return best
